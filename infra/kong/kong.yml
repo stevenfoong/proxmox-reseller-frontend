@@ -1,0 +1,166 @@
+_format_version: "3.0"
+_transform: true
+
+###############################################################################
+# Services – one entry per backend microservice
+###############################################################################
+services:
+
+  ## Auth Service
+  - name: auth-service
+    url: http://auth-service:8080
+    connect_timeout: 5000
+    read_timeout: 10000
+    write_timeout: 10000
+    routes:
+      - name: auth-routes
+        paths:
+          - /v1/auth
+        strip_path: false
+        methods: [GET, POST, DELETE, OPTIONS]
+
+  ## VM / Container Service
+  - name: vm-service
+    url: http://vm-service:8080
+    connect_timeout: 5000
+    read_timeout: 60000   # longer for operations like VM creation
+    write_timeout: 60000
+    routes:
+      - name: vm-routes
+        paths:
+          - /v1/vms
+          - /v1/containers
+        strip_path: false
+        methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+
+  ## Billing Service
+  - name: billing-service
+    url: http://billing-service:8080
+    connect_timeout: 5000
+    read_timeout: 15000
+    write_timeout: 15000
+    routes:
+      - name: billing-routes
+        paths:
+          - /v1/billing
+        strip_path: false
+        methods: [GET, POST, PUT, DELETE, OPTIONS]
+
+  ## Monitoring Service
+  - name: monitoring-service
+    url: http://monitoring-service:8080
+    connect_timeout: 5000
+    read_timeout: 30000
+    write_timeout: 30000
+    routes:
+      - name: monitoring-routes
+        paths:
+          - /v1/monitoring
+        strip_path: false
+        methods: [GET, POST, OPTIONS]
+
+  ## Notification Service
+  - name: notification-service
+    url: http://notification-service:8080
+    connect_timeout: 5000
+    read_timeout: 10000
+    write_timeout: 10000
+    routes:
+      - name: notification-routes
+        paths:
+          - /v1/notifications
+        strip_path: false
+        methods: [GET, POST, PUT, DELETE, OPTIONS]
+
+  ## Storage Service
+  - name: storage-service
+    url: http://storage-service:8080
+    connect_timeout: 5000
+    read_timeout: 120000  # large file uploads / restores
+    write_timeout: 120000
+    routes:
+      - name: storage-routes
+        paths:
+          - /v1/storage
+        strip_path: false
+        methods: [GET, POST, PUT, DELETE, OPTIONS]
+
+###############################################################################
+# Global plugins (applied to all services unless overridden)
+###############################################################################
+plugins:
+
+  ## JWT verification – validates OIDC access_token signed with RS256
+  - name: jwt
+    config:
+      key_claim_name: sub
+      claims_to_verify:
+        - exp
+      secret_is_base64: false
+      # The JWKS endpoint is configured per-consumer / via the jwt-secrets entity.
+      # Kong will use the 'iss' claim to look up the correct key set.
+
+  ## Rate limiting – stored in Redis (enforced across all Kong replicas)
+  - name: rate-limiting
+    config:
+      minute: 300
+      policy: redis
+      redis:
+        host: redis
+        port: 6379
+        database: 0
+        timeout: 2000
+      fault_tolerant: true
+      hide_client_headers: false
+      error_code: 429
+      error_message: "API rate limit exceeded. Please slow down."
+
+  ## CORS
+  - name: cors
+    config:
+      origins:
+        - "https://admin.example.com"
+        - "https://cloud.example.com"
+        - "http://localhost:3000"   # local dev – user app
+        - "http://localhost:3001"   # local dev – admin app
+      methods:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+        - OPTIONS
+      headers:
+        - Authorization
+        - Content-Type
+        - Accept
+        - X-Request-ID
+      exposed_headers:
+        - X-Request-ID
+        - X-RateLimit-Remaining-Minute
+      credentials: true
+      max_age: 3600
+      preflight_continue: false
+
+  ## Correlation ID injection
+  - name: correlation-id
+    config:
+      header_name: X-Request-ID
+      generator: uuid#counter
+      echo_downstream: true
+
+  ## Prometheus metrics (scraped by Prometheus at :8001/metrics)
+  - name: prometheus
+    config:
+      status_code_metrics: true
+      latency_metrics: true
+      bandwidth_metrics: true
+      upstream_health_metrics: true
+
+  ## Response transformer – standardise error bodies from upstream
+  - name: response-transformer
+    config:
+      remove:
+        headers:
+          - X-Powered-By
+          - Server
