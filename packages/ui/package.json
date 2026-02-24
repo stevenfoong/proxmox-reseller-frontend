@@ -1,0 +1,22 @@
+{
+  "name": "@proxmox-reseller/ui",
+  "version": "0.0.1",
+  "private": true,
+  "license": "AGPL-3.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@proxmox-reseller/tsconfig": "workspace:*",
+    "@types/react": "^18.3.5"
+  },
+  "peerDependencies": {
+    "react": "^18.3.1"
+  }
+}

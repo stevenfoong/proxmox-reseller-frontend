@@ -1,0 +1,10 @@
+{
+  "extends": "@proxmox-reseller/tsconfig/react.json",
+  "include": ["src"],
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  }
+}

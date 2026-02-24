@@ -1,0 +1,4 @@
+{
+  "extends": "@proxmox-reseller/tsconfig/react.json",
+  "include": ["src"]
+}

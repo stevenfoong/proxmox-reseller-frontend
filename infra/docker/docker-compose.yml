@@ -1,0 +1,244 @@
+version: "3.9"
+
+###############################################################################
+# Proxmox Cloud Reseller – Local Development Stack
+#
+# Usage:
+#   cp .env.example .env    # fill in secrets
+#   docker compose up -d
+###############################################################################
+
+networks:
+  cloud-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Kong API Gateway (DB-less / declarative mode)
+  # ---------------------------------------------------------------------------
+  kong:
+    image: kong:3.7
+    container_name: kong
+    restart: unless-stopped
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /etc/kong/kong.yml
+      KONG_PROXY_LISTEN: "0.0.0.0:8000"
+      KONG_ADMIN_LISTEN: "0.0.0.0:8001"
+      KONG_LOG_LEVEL: info
+    ports:
+      - "8000:8000"   # API proxy
+      - "8001:8001"   # Admin API (internal only in prod)
+    volumes:
+      - ../kong/kong.yml:/etc/kong/kong.yml:ro
+    networks:
+      - cloud-net
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Redis (cache + streams + pub/sub)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    command: >
+      redis-server
+        --appendonly yes
+        --maxmemory 512mb
+        --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - cloud-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: proxmox_reseller
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - cloud-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d proxmox_reseller"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Keycloak – OIDC Identity Provider
+  # ---------------------------------------------------------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: keycloak
+    restart: unless-stopped
+    command: start-dev
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: app
+      KC_DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      KC_HOSTNAME: localhost
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD is required}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cloud-net
+
+  # ---------------------------------------------------------------------------
+  # Auth Service (Go)
+  # ---------------------------------------------------------------------------
+  auth-service:
+    build:
+      context: ../../services/auth
+      dockerfile: Dockerfile
+    container_name: auth-service
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgres://app:${DB_PASSWORD}@postgres:5432/proxmox_reseller?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      OIDC_ISSUER: ${OIDC_ISSUER:-http://keycloak:8080/realms/cloud}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cloud-net
+
+  # ---------------------------------------------------------------------------
+  # VM Service (Go)
+  # ---------------------------------------------------------------------------
+  vm-service:
+    build:
+      context: ../../services/vm
+      dockerfile: Dockerfile
+    container_name: vm-service
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      REDIS_URL: redis://redis:6379
+      PROXMOX_HOST: ${PROXMOX_HOST:?PROXMOX_HOST is required}
+      PROXMOX_TOKEN_ID: ${PROXMOX_TOKEN_ID:?PROXMOX_TOKEN_ID is required}
+      PROXMOX_TOKEN_SECRET: ${PROXMOX_TOKEN_SECRET:?PROXMOX_TOKEN_SECRET is required}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - cloud-net
+
+  # ---------------------------------------------------------------------------
+  # Billing Service (Go)
+  # ---------------------------------------------------------------------------
+  billing-service:
+    build:
+      context: ../../services/billing
+      dockerfile: Dockerfile
+    container_name: billing-service
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgres://app:${DB_PASSWORD}@postgres:5432/proxmox_reseller?sslmode=disable
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cloud-net
+
+  # ---------------------------------------------------------------------------
+  # Monitoring Service (Go)
+  # ---------------------------------------------------------------------------
+  monitoring-service:
+    build:
+      context: ../../services/monitoring
+      dockerfile: Dockerfile
+    container_name: monitoring-service
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      REDIS_URL: redis://redis:6379
+      PROXMOX_HOST: ${PROXMOX_HOST}
+      PROXMOX_TOKEN_ID: ${PROXMOX_TOKEN_ID}
+      PROXMOX_TOKEN_SECRET: ${PROXMOX_TOKEN_SECRET}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - cloud-net
+
+  # ---------------------------------------------------------------------------
+  # Notification Service (Go)
+  # ---------------------------------------------------------------------------
+  notification-service:
+    build:
+      context: ../../services/notification
+      dockerfile: Dockerfile
+    container_name: notification-service
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      REDIS_URL: redis://redis:6379
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - cloud-net
+
+  # ---------------------------------------------------------------------------
+  # Storage Service (Go)
+  # ---------------------------------------------------------------------------
+  storage-service:
+    build:
+      context: ../../services/storage
+      dockerfile: Dockerfile
+    container_name: storage-service
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      REDIS_URL: redis://redis:6379
+      PROXMOX_HOST: ${PROXMOX_HOST}
+      PROXMOX_TOKEN_ID: ${PROXMOX_TOKEN_ID}
+      PROXMOX_TOKEN_SECRET: ${PROXMOX_TOKEN_SECRET}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - cloud-net
