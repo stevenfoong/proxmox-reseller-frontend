@@ -1,7 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from '@proxmox-reseller/auth';
-import { LoadingSpinner } from '@proxmox-reseller/ui';
+import { LoadingSpinner, LoginPage } from '@proxmox-reseller/ui';
 import { UserLayout } from '../layouts/UserLayout';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { InstancesPage } from '../features/instances/InstancesPage';
@@ -10,7 +10,7 @@ import { NetworkPage } from '../features/network/NetworkPage';
 import { BillingPage } from '../features/billing/BillingPage';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading, login } = useAuth();
+  const { isAuthenticated, isLoading, login, error } = useAuth();
 
   if (isLoading) {
     return (
@@ -21,8 +21,14 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   }
 
   if (!isAuthenticated) {
-    login();
-    return null;
+    return (
+      <LoginPage
+        title="☁️ Proxmox Cloud"
+        subtitle="Sign in to manage your cloud resources"
+        onLogin={login}
+        error={error}
+      />
+    );
   }
 
   return <>{children}</>;
