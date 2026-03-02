@@ -1,7 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from '@proxmox-reseller/auth';
-import { LoadingSpinner } from '@proxmox-reseller/ui';
+import { LoadingSpinner, LoginPage } from '@proxmox-reseller/ui';
 import { AdminLayout } from '../layouts/AdminLayout';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { UsersPage } from '../features/users/UsersPage';
@@ -10,7 +10,7 @@ import { BillingPage } from '../features/billing/BillingPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
 
 function RequireAdmin({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading, user, login } = useAuth();
+  const { isAuthenticated, isLoading, user, login, error } = useAuth();
 
   if (isLoading) {
     return (
@@ -21,8 +21,14 @@ function RequireAdmin({ children }: { children: React.ReactNode }) {
   }
 
   if (!isAuthenticated) {
-    login();
-    return null;
+    return (
+      <LoginPage
+        title="☁️ Proxmox Cloud Admin Console"
+        subtitle="Sign in with your administrator account"
+        onLogin={login}
+        error={error}
+      />
+    );
   }
 
   if (!user?.roles.includes('admin')) {
